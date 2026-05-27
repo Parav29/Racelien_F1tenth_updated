@@ -550,8 +550,32 @@ bound1, bound2 = helper_funcs_glob.src.check_traj.\
 
 # export race trajectory to CSV
 if "traj_race_export" in file_paths.keys():
-    helper_funcs_glob.src.export_traj_race.export_traj_race_f110(file_paths=file_paths,
-                                                            traj_race=traj_race_cl)
+    # Compute arc lengths along the reference track (at stepsize_reg spacing)
+    # We must include the distance from the last point to the first point to close the loop
+    diffs = np.vstack((np.diff(reftrack_interp[:, :2], axis=0), 
+                       reftrack_interp[0, :2] - reftrack_interp[-1, :2]))
+    s_reftrack = np.insert(np.cumsum(np.sqrt(np.sum(diffs ** 2, axis=1))), 0, 0.0)
+
+    # Track widths relative to the RACELINE = centerline widths adjusted by lateral shift alpha_opt
+    # alpha_opt > 0 means raceline shifted to the right → right wall is closer, left wall is further
+    w_tr_right_raceline = reftrack_interp[:, 2] - alpha_opt
+    w_tr_left_raceline  = reftrack_interp[:, 3] + alpha_opt
+
+    # Interpolate from reftrack spacing to fine raceline spacing (traj_race_cl has one extra closing point)
+    s_raceline = traj_race_cl[:, 0]
+    s_ref_wrap = s_reftrack / s_reftrack[-1] * s_raceline[-1]  # scale to same total length
+    w_right_interp = np.interp(s_raceline, s_ref_wrap, np.append(w_tr_right_raceline, w_tr_right_raceline[0]))
+    w_left_interp  = np.interp(s_raceline, s_ref_wrap, np.append(w_tr_left_raceline,  w_tr_left_raceline[0]))
+
+    # Clamp to minimum 0.01m (never negative)
+    w_right_interp = np.clip(w_right_interp, 0.01, None)
+    w_left_interp  = np.clip(w_left_interp,  0.01, None)
+
+    helper_funcs_glob.src.export_traj_race.export_traj_race_f110(
+        file_paths=file_paths,
+        traj_race=traj_race_cl,
+        w_tr_right=w_right_interp,
+        w_tr_left=w_left_interp)
 
 # if requested, export trajectory including map information (via normal vectors) to CSV
 if "traj_ltpl_export" in file_paths.keys():
