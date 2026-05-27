@@ -48,37 +48,45 @@ def result_plots(plot_opts: dict,
         vec_arrow = point2_arrow - point1_arrow
 
         # plot track including optimized path
-        plt.figure()
-        plt.plot(refline[:, 0], refline[:, 1], "k--", linewidth=0.7)
-        plt.plot(veh_bound1_virt[:, 0], veh_bound1_virt[:, 1], "b", linewidth=0.5)
-        plt.plot(veh_bound2_virt[:, 0], veh_bound2_virt[:, 1], "b", linewidth=0.5)
-        plt.plot(veh_bound1_real[:, 0], veh_bound1_real[:, 1], "c", linewidth=0.5)
-        plt.plot(veh_bound2_real[:, 0], veh_bound2_real[:, 1], "c", linewidth=0.5)
-        plt.plot(bound1_interp[:, 0], bound1_interp[:, 1], "k-", linewidth=0.7)
-        plt.plot(bound2_interp[:, 0], bound2_interp[:, 1], "k-", linewidth=0.7)
-        plt.plot(trajectory[:, 1], trajectory[:, 2], "r-", linewidth=0.7)
+        fig, ax = plt.subplots()
+        ax.plot(refline[:, 0], refline[:, 1], "k--", linewidth=0.7, label="Centerline (reference)")
+        ax.plot(veh_bound1_virt[:, 0], veh_bound1_virt[:, 1], "b", linewidth=0.5,
+                label=f"Opt. vehicle envelope (w={width_veh_opt:.2f}m)")
+        ax.plot(veh_bound2_virt[:, 0], veh_bound2_virt[:, 1], "b", linewidth=0.5)
+        ax.plot(veh_bound1_real[:, 0], veh_bound1_real[:, 1], "c", linewidth=0.5,
+                label=f"Real vehicle envelope (w={width_veh_real:.2f}m)")
+        ax.plot(veh_bound2_real[:, 0], veh_bound2_real[:, 1], "c", linewidth=0.5)
+        ax.plot(bound1_interp[:, 0], bound1_interp[:, 1], "k-", linewidth=0.7, label="Track boundaries")
+        ax.plot(bound2_interp[:, 0], bound2_interp[:, 1], "k-", linewidth=0.7)
+        ax.plot(trajectory[:, 1], trajectory[:, 2], "r-", linewidth=1.2, label="Optimized raceline")
 
         if plot_opts["imported_bounds"] and bound1_imp is not None and bound2_imp is not None:
-            plt.plot(bound1_imp[:, 0], bound1_imp[:, 1], "y-", linewidth=0.7)
-            plt.plot(bound2_imp[:, 0], bound2_imp[:, 1], "y-", linewidth=0.7)
+            ax.plot(bound1_imp[:, 0], bound1_imp[:, 1], "y-", linewidth=0.7, label="Imported bounds (raw)")
+            ax.plot(bound2_imp[:, 0], bound2_imp[:, 1], "y-", linewidth=0.7)
 
-        plt.grid()
-        ax = plt.gca()
-        # Set Arrow Size
+        # driving direction arrow
         ax.arrow(point1_arrow[0], point1_arrow[1], vec_arrow[0], vec_arrow[1],
-                 head_width=2.0, head_length=2.0, fc='g', ec='g')
+                 head_width=2.0, head_length=2.0, fc='g', ec='g', label="Driving direction")
+
+        ax.grid()
         ax.set_aspect("equal", "datalim")
-        plt.xlabel("east in m")
-        plt.ylabel("north in m")
+        ax.set_xlabel("east in m")
+        ax.set_ylabel("north in m")
+        ax.set_title("Raceline Optimization Result")
+        ax.legend(loc="best", fontsize=8)
+        plt.tight_layout()
         plt.show()
 
     if plot_opts["raceline_curv"]:
         # plot curvature profile
         plt.figure()
-        plt.plot(trajectory[:, 0], trajectory[:, 4])
+        plt.plot(trajectory[:, 0], trajectory[:, 4], label="Curvature (kappa)")
         plt.grid()
         plt.xlabel("distance in m")
         plt.ylabel("curvature in rad/m")
+        plt.title("Raceline Curvature Profile")
+        plt.legend()
+        plt.tight_layout()
         plt.show()
 
     if plot_opts["racetraj_vel_3d"]:
