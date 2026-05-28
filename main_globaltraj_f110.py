@@ -247,6 +247,37 @@ if opt_type == 'mintime' and pars["optim_opts"]["safe_traj"] \
         pars["optim_opts"]["ay_safe"] = np.amin(ggv[:, 2])
 
 # ----------------------------------------------------------------------------------------------------------------------
+# AUTO-SCALE PARAMETERS BASED ON TRACK LENGTH --------------------------------------------------------------------------
+# ----------------------------------------------------------------------------------------------------------------------
+# The dense QP solver scales as O(N^3). For N > 1500 points it will hang.
+# We must limit N by dynamically adjusting the sampling step sizes based on map length.
+diff_x = np.diff(reftrack_imp[:, 0])
+diff_y = np.diff(reftrack_imp[:, 1])
+track_len = np.sum(np.hypot(diff_x, diff_y)) + np.hypot(reftrack_imp[-1, 0] - reftrack_imp[0, 0], reftrack_imp[-1, 1] - reftrack_imp[0, 1])
+
+if track_len > 200:
+    # Huge tracks (e.g. Austin_map ~420m)
+    pars["stepsize_opts"]["stepsize_prep"] = 0.5
+    pars["stepsize_opts"]["stepsize_reg"] = 1.0
+    pars["stepsize_opts"]["stepsize_interp_after_opt"] = 0.5
+    pars["reg_smooth_opts"]["s_reg"] = 200
+elif track_len > 60:
+    # Medium/Large tracks
+    pars["stepsize_opts"]["stepsize_prep"] = 0.2
+    pars["stepsize_opts"]["stepsize_reg"] = 0.5
+    pars["stepsize_opts"]["stepsize_interp_after_opt"] = 0.2
+    pars["reg_smooth_opts"]["s_reg"] = 50
+else:
+    # Small tracks (e.g. lab ~13m)
+    pars["stepsize_opts"]["stepsize_prep"] = 0.05
+    pars["stepsize_opts"]["stepsize_reg"] = 0.15
+    pars["stepsize_opts"]["stepsize_interp_after_opt"] = 0.1
+    pars["reg_smooth_opts"]["s_reg"] = 3
+
+if debug:
+    print(f"INFO: Track length is {track_len:.1f}m. Auto-scaled stepsize_reg to {pars['stepsize_opts']['stepsize_reg']}m.")
+
+# ----------------------------------------------------------------------------------------------------------------------
 # PREPARE REFTRACK -----------------------------------------------------------------------------------------------------
 # ----------------------------------------------------------------------------------------------------------------------
 
