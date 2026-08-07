@@ -1,4 +1,5 @@
 import numpy as np
+# import helper_funcs_glob as tph
 import trajectory_planning_helpers as tph
 import sys
 import matplotlib.pyplot as plt
@@ -43,6 +44,24 @@ def prep_track(reftrack_imp: np.ndarray,
                              stepsize_prep=stepsize_opts["stepsize_prep"],
                              stepsize_reg=stepsize_opts["stepsize_reg"],
                              debug=debug)
+
+    # ------------------------------------------------------------------------------------------------------------------
+    # CAP WIDTHS TO LOCAL CURVATURE RADIUS (prevents crossed normals at tight corners) ----------------------------------
+    # ------------------------------------------------------------------------------------------------------------------
+    xi, yi = reftrack_interp[:, 0], reftrack_interp[:, 1]
+    _dx  = np.gradient(np.append(xi, xi[0]))[:-1]
+    _dy  = np.gradient(np.append(yi, yi[0]))[:-1]
+    _ddx = np.gradient(np.append(_dx, _dx[0]))[:-1]
+    _ddy = np.gradient(np.append(_dy, _dy[0]))[:-1]
+    _denom = (_dx**2 + _dy**2)**1.5
+    _kappa = np.abs(_dx * _ddy - _dy * _ddx) / np.where(_denom > 1e-9, _denom, 1e-9)
+    with np.errstate(divide='ignore', invalid='ignore'):
+        _radius = np.where(_kappa > 1e-6, 1.0 / _kappa, 1e6)
+    _cap = 0.80 * _radius  # half-width must stay below 80% of radius
+    _hw  = (reftrack_interp[:, 2] + reftrack_interp[:, 3]) / 2.0
+    _scale = np.where(_hw > _cap, _cap / np.maximum(_hw, 1e-9), 1.0)
+    reftrack_interp[:, 2] *= _scale
+    reftrack_interp[:, 3] *= _scale
 
     # calculate splines
     refpath_interp_cl = np.vstack((reftrack_interp[:, :2], reftrack_interp[0, :2]))

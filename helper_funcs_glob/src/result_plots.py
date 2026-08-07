@@ -2,7 +2,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
 import trajectory_planning_helpers
-
+import helper_funcs_glob
 
 def result_plots(plot_opts: dict,
                  width_veh_opt: float,
@@ -37,8 +37,15 @@ def result_plots(plot_opts: dict,
         normvec_normalized_opt = trajectory_planning_helpers.calc_normal_vectors.\
             calc_normal_vectors(trajectory[:, 3])
 
-        veh_bound1_virt = trajectory[:, 1:3] + normvec_normalized_opt * width_veh_opt / 2
-        veh_bound2_virt = trajectory[:, 1:3] - normvec_normalized_opt * width_veh_opt / 2
+        if isinstance(width_veh_opt, np.ndarray):
+            if width_veh_opt.shape[0] != trajectory.shape[0]:
+                width_veh_opt_arr = np.ones(trajectory.shape[0]) * np.mean(width_veh_opt)
+            else:
+                width_veh_opt_arr = width_veh_opt
+        else:
+            width_veh_opt_arr = np.ones(trajectory.shape[0]) * width_veh_opt
+        veh_bound1_virt = trajectory[:, 1:3] + normvec_normalized_opt * np.expand_dims(width_veh_opt_arr, 1) / 2
+        veh_bound2_virt = trajectory[:, 1:3] - normvec_normalized_opt * np.expand_dims(width_veh_opt_arr, 1) / 2
 
         veh_bound1_real = trajectory[:, 1:3] + normvec_normalized_opt * width_veh_real / 2
         veh_bound2_real = trajectory[:, 1:3] - normvec_normalized_opt * width_veh_real / 2
@@ -51,7 +58,7 @@ def result_plots(plot_opts: dict,
         fig, ax = plt.subplots()
         ax.plot(refline[:, 0], refline[:, 1], "k--", linewidth=0.7, label="Centerline (reference)")
         ax.plot(veh_bound1_virt[:, 0], veh_bound1_virt[:, 1], "b", linewidth=0.5,
-                label=f"Opt. vehicle envelope (w={width_veh_opt:.2f}m)")
+                label=f"Opt. vehicle envelope (w={np.mean(width_veh_opt):.2f}m)")
         ax.plot(veh_bound2_virt[:, 0], veh_bound2_virt[:, 1], "b", linewidth=0.5)
         ax.plot(veh_bound1_real[:, 0], veh_bound1_real[:, 1], "c", linewidth=0.5,
                 label=f"Real vehicle envelope (w={width_veh_real:.2f}m)")

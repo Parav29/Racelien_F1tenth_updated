@@ -8,6 +8,7 @@ import numpy as np
 import time
 import json
 import os
+# import helper_funcs_glob as tph
 import trajectory_planning_helpers as tph
 import copy
 import matplotlib.pyplot as plt
@@ -257,25 +258,72 @@ track_len = np.sum(np.hypot(diff_x, diff_y)) + np.hypot(reftrack_imp[-1, 0] - re
 
 if track_len > 200:
     # Huge tracks (e.g. Austin_map ~420m)
-    pars["stepsize_opts"]["stepsize_prep"] = 0.5
+    pars["stepsize_opts"]["stepsize_prep"] = 0.3
     pars["stepsize_opts"]["stepsize_reg"] = 1.0
-    pars["stepsize_opts"]["stepsize_interp_after_opt"] = 0.5
+    pars["stepsize_opts"]["stepsize_interp_after_opt"] = 0.3
     pars["reg_smooth_opts"]["s_reg"] = 200
 elif track_len > 60:
     # Medium/Large tracks
-    pars["stepsize_opts"]["stepsize_prep"] = 0.2
+    pars["stepsize_opts"]["stepsize_prep"] = 0.1
     pars["stepsize_opts"]["stepsize_reg"] = 0.5
-    pars["stepsize_opts"]["stepsize_interp_after_opt"] = 0.2
-    pars["reg_smooth_opts"]["s_reg"] = 50
-else:
-    # Small tracks (e.g. lab ~13m)
-    pars["stepsize_opts"]["stepsize_prep"] = 0.05
-    pars["stepsize_opts"]["stepsize_reg"] = 0.15
     pars["stepsize_opts"]["stepsize_interp_after_opt"] = 0.1
+    pars["reg_smooth_opts"]["s_reg"] = 50
+elif track_len > 18:
+    # Small-but-complex tracks (e.g. Map1_rc ~25m) — width capping handles crossings; keep mild smoothing
+    pars["stepsize_opts"]["stepsize_prep"] = 0.05
+    pars["stepsize_opts"]["stepsize_reg"] = 0.2
+    pars["stepsize_opts"]["stepsize_interp_after_opt"] = 0.05
+    pars["reg_smooth_opts"]["s_reg"] = 5
+else:
+    # Very small/simple tracks (e.g. lab ~13m)
+    pars["stepsize_opts"]["stepsize_prep"] = 0.02
+    pars["stepsize_opts"]["stepsize_reg"] = 0.15
+    pars["stepsize_opts"]["stepsize_interp_after_opt"] = 0.05
     pars["reg_smooth_opts"]["s_reg"] = 3
 
 if debug:
     print(f"INFO: Track length is {track_len:.1f}m. Auto-scaled stepsize_reg to {pars['stepsize_opts']['stepsize_reg']}m.")
+
+# ----------------------------------------------------------------------------------------------------------------------
+# CAP TRACK WIDTHS TO LOCAL CURVATURE RADIUS ---------------------------------------------------------------------------
+# ----------------------------------------------------------------------------------------------------------------------
+# At tight corners the track half-width can exceed the curvature radius, making it geometrically
+# impossible for spline normals not to cross. We clip widths so: (wr + wl)/2 <= cap_factor * radius.
+
+def _cap_widths_to_curvature(reftrack: np.ndarray, cap_factor: float = 0.85,
+                             min_half_width: float = 0.20) -> np.ndarray:
+    """Return a copy of reftrack with widths capped at cap_factor * local curvature radius.
+    
+    min_half_width: absolute floor for each half-width in metres so the cap
+    never shrinks the corridor below the car body.
+    """
+    reftrack = reftrack.copy()
+    x, y = reftrack[:, 0], reftrack[:, 1]
+    # Wrap-around finite differences for a closed loop
+    dx  = np.gradient(np.append(x, x[0]))[:-1]
+    dy  = np.gradient(np.append(y, y[0]))[:-1]
+    ddx = np.gradient(np.append(dx, dx[0]))[:-1]
+    ddy = np.gradient(np.append(dy, dy[0]))[:-1]
+    denom = (dx**2 + dy**2)**1.5
+    kappa = np.abs(dx * ddy - dy * ddx) / np.where(denom > 1e-9, denom, 1e-9)
+    # Smooth curvature to suppress noise spikes from sparse/jagged input points
+    from scipy.ndimage import uniform_filter1d
+    kappa = uniform_filter1d(kappa, size=5, mode='wrap')
+    with np.errstate(divide='ignore', invalid='ignore'):
+        radius = np.where(kappa > 1e-6, 1.0 / kappa, 1e6)
+
+    max_half_width = cap_factor * radius
+    half_width = (reftrack[:, 2] + reftrack[:, 3]) / 2.0
+    scale = np.where(half_width > max_half_width, max_half_width / np.maximum(half_width, 1e-9), 1.0)
+    reftrack[:, 2] = np.maximum(reftrack[:, 2] * scale, min_half_width)
+    reftrack[:, 3] = np.maximum(reftrack[:, 3] * scale, min_half_width)
+    return reftrack
+
+# Use vehicle half-width as the absolute minimum (car must fit through the corridor)
+veh_half_width = pars["veh_params"]["width"] / 2.0 + 0.05  # +5cm safety
+reftrack_imp = _cap_widths_to_curvature(reftrack_imp, cap_factor=0.80, min_half_width=veh_half_width)
+if debug:
+    print("INFO: Applied curvature-aware width capping to prevent crossed normals.")
 
 # ----------------------------------------------------------------------------------------------------------------------
 # PREPARE REFTRACK -----------------------------------------------------------------------------------------------------
@@ -300,15 +348,36 @@ if opt_type == 'mintime' and mintime_opts["reopt_mintime_solution"]:
     pars_tmp = copy.deepcopy(pars)
     pars_tmp["optim_opts"]["width_opt"] = w_veh_tmp
 else:
-    pars_tmp = pars
+    pars_tmp = copy.deepcopy(pars)
+
+# dynamically shrink width_opt locally if the track is narrower than width_opt.
+# Use an adaptive safety margin: on wide sections boost to 1.5× width_opt for
+# larger boundary clearance, but on narrow sections fall back to just the real
+# vehicle width so the QP remains feasible.
+track_widths = reftrack_interp[:, 2] + reftrack_interp[:, 3]
+veh_width_real = pars_tmp["veh_params"]["width"]
+width_opt_base = pars_tmp["optim_opts"]["width_opt"]
+
+# Compute per-point target: 85% of local track width, capped at 1.5× width_opt,
+# but never below the real vehicle width (floor) to keep the QP feasible.
+w_veh_arr = np.clip(
+    np.minimum(width_opt_base * 1.5, track_widths * 0.85),
+    veh_width_real,          # floor: must fit the real car
+    track_widths * 0.90      # hard ceiling: always leave 10% gap on each side
+)
+if np.any(w_veh_arr < width_opt_base * 1.5):
+    if debug:
+        print(f"WARNING: Track has narrow sections. Dynamically scaling width_opt per point.")
+pars_tmp["optim_opts"]["width_opt"] = w_veh_arr
+pars["optim_opts"]["width_opt"] = w_veh_arr
 
 # call optimization
 if opt_type == 'mincurv':
     alpha_opt = tph.opt_min_curv.opt_min_curv(reftrack=reftrack_interp,
                                               normvectors=normvec_normalized_interp,
                                               A=a_interp,
-                                              kappa_bound=pars["veh_params"]["curvlim"],
-                                              w_veh=pars["optim_opts"]["width_opt"],
+                                              kappa_bound=pars_tmp["veh_params"]["curvlim"],
+                                              w_veh=pars_tmp["optim_opts"]["width_opt"],
                                               print_debug=debug,
                                               plot_debug=plot_opts["mincurv_curv_lin"])[0]
 
@@ -317,8 +386,8 @@ elif opt_type == 'mincurv_iqp':
         iqp_handler(reftrack=reftrack_interp,
                     normvectors=normvec_normalized_interp,
                     A=a_interp,
-                    kappa_bound=pars["veh_params"]["curvlim"],
-                    w_veh=pars["optim_opts"]["width_opt"],
+                    kappa_bound=pars_tmp["veh_params"]["curvlim"],
+                    w_veh=pars_tmp["optim_opts"]["width_opt"],
                     print_debug=debug,
                     plot_debug=plot_opts["mincurv_curv_lin"],
                     stepsize_interp=pars["stepsize_opts"]["stepsize_reg"],

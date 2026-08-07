@@ -5,6 +5,7 @@ import numpy as np
 import casadi as ca
 import opt_mintime_traj
 import trajectory_planning_helpers as tph
+# import helper_funcs_glob as tph
 
 
 def opt_mintime(reftrack: np.ndarray,
