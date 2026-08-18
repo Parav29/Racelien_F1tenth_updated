@@ -138,4 +138,4 @@ dmypy.json
 .idea
 
 # repo specific
-outputs
+#outputs
